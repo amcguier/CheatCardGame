@@ -2,7 +2,8 @@ group Server
     source https://api.nuget.org/v3/index.json
     framework: netcoreapp2.2
     storage: none
-
+    
+    clitool dotnet-saturn
     nuget FSharp.Core
     nuget Saturn
     nuget Thoth.Json.Giraffe
