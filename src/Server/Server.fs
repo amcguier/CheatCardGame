@@ -6,6 +6,7 @@ open FSharp.Control.Tasks.V2
 open Giraffe
 open Saturn
 open Shared
+open Api
 
 let tryGetEnv =
     System.Environment.GetEnvironmentVariable
@@ -22,12 +23,8 @@ let port =
     |> Option.map uint16
     |> Option.defaultValue 8085us
 
-let getInitCounter() : Task<Counter> = task { return { Value = 42 } }
-let webApp =
-    router
-        {
-        get "/api/init" (fun next ctx -> task { let! counter = getInitCounter()
-                                                return! json counter next ctx }) }
+
+
 
 let app =
     application {

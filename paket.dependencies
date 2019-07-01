@@ -6,6 +6,7 @@ group Server
     clitool dotnet-saturn
     nuget FSharp.Core
     nuget Saturn
+nuget StackExchange.Redis
     nuget Thoth.Json.Giraffe
 
 group Client
@@ -32,4 +33,3 @@ group Build
     nuget Fake.Core.Target
     nuget Fake.DotNet.Cli
     nuget Fake.IO.FileSystem
-
