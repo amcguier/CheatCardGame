@@ -6,8 +6,9 @@ group Server
     clitool dotnet-saturn
     nuget FSharp.Core
     nuget Saturn
-nuget StackExchange.Redis
     nuget Thoth.Json.Giraffe
+    nuget StackExchange.Redis
+
 
 group Client
     source https://api.nuget.org/v3/index.json
