@@ -32,7 +32,8 @@ type Game =
   { GameId : string
     Owner : string
     Players : int
-    PlayersConnected : int }
+    PlayersConnected : int
+    IsStarted : bool }
 
 type Counter =
   { Value : int }

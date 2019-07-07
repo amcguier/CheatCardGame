@@ -34,12 +34,24 @@ let createGame (newGame : NewGame) =
     { GameId = id
       Owner = newGame.Username
       Players = newGame.Players
-      PlayersConnected = 0 }
+      PlayersConnected = 0
+      IsStarted = false }
   TimeSpan.FromMinutes 15.0
   |> Some
   |> storeRedis (gameKey id) game
   |> ignore
   game
+
+let showGame (gameId : string) =
+  let gameKey : RedisKey = ~~(gameKey gameId)
+  ~~(db.StringGet gameKey)
+  |> function
+  | null -> Error("No value from redis")
+  | s -> Ok(s)
+  |> Result.bind Decode.Auto.fromString<Game>
+  |> function
+  | Ok(game) -> Some(game)
+  | Error(str) -> None
 
 let gameController =
   controller {
@@ -52,15 +64,15 @@ let gameController =
                |> Controller.json ctx
       })
     show (fun ctx (id : string) ->
-      { Hand = []
-        PlayerCounts = []
-        DiscardCount = 0 }
-      |> Controller.json ctx)
+      showGame id
+      |> function
+      | Some(game) -> Controller.json ctx game
+      | None -> (Response.notFound ctx "Game Not Found"))
   }
 
 let webApp =
   router {
-    forward "/api/game" gameController
+    forward "/api/games" gameController
     get "/api/init" (fun next ctx -> task { let! counter = getInitCounter()
                                             return! json counter next ctx })
   }
