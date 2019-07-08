@@ -28,6 +28,16 @@ type NewGame =
   { Username : string
     Players : int }
 
+type Player =
+  { Username : string
+    Position : int64
+    Dealer : bool
+    Hand : Hand option
+    Id : string }
+
+type NewPlayer =
+  { Username : string }
+
 type Game =
   { GameId : string
     Owner : string
