@@ -52,14 +52,14 @@ let resultTo404 ctx msg =
 let playersSetKey gameId = (gameKey gameId) + ":players"
 let playersCount gameId = playersSetKey gameId + ":count"
 
-let getPlayerCount gameId =
+let getPlayerCount gameId : int =
   let id : RedisKey = ~~(playersCount gameId)
   ~~db.StringGet(id)
   |> function
   | null -> 0
   | s -> Int32.Parse s
 
-let showGame (gameId : string) =
+let showGame (gameId : string) : Result<Game, String> =
   let gameKey : RedisKey = ~~(gameKey gameId)
   ~~(db.StringGet gameKey)
   |> function
@@ -78,7 +78,7 @@ let createPlayer (game : Game) (np : NewPlayer) =
   let usr : RedisValue = ~~(np.Username)
   let countKey : RedisKey = ~~(playersCount game.GameId)
 
-  let storePlayer np position =
+  let storePlayer np position : Player =
     let player =
       { Username = np.Username
         Position = position
@@ -98,7 +98,7 @@ let createPlayer (game : Game) (np : NewPlayer) =
     |> Result.map (fun _ -> db.StringIncrement(countKey))
     |> Result.map (storePlayer np)
 
-let startGame (game : Game) =
+let startGame (game : Game) : Result<Game, string> =
   if game.PlayersConnected = game.Players then
     Error("Not all players connected")
   else { game with IsStarted = true } |> Ok
