@@ -50,6 +50,7 @@ let resultTo404 ctx msg =
   | Error(_) -> (Response.notFound ctx msg)
 
 let playersSetKey gameId = (gameKey gameId) + ":players"
+let playersByUserKey gameId = (gameKey gameId) + ":players:userids"
 let playersCount gameId = playersSetKey gameId + ":count"
 
 let getPlayerCount gameId : int =
@@ -69,12 +70,30 @@ let showGame (gameId : string) : Result<Game, String> =
   |> Result.map
        (fun game -> { game with PlayersConnected = getPlayerCount gameId })
 
-let deal() = db.StringGetRange
 let playerKey gameId playerId =
   sprintf "%s:player:%s" (playersSetKey gameId) playerId
 
-let createPlayer (game : Game) (np : NewPlayer) =
+let storePlayer game player =
   let ky : RedisKey = ~~(playersSetKey game.GameId)
+  let playerKey : RedisValue = ~~(player.Id)
+  let value : RedisValue = ~~(Encode.Auto.toString (2, player, extra = extra))
+  db.HashSet(ky, [| HashEntry(playerKey, value) |])
+  db.KeyExpire(ky, Nullable(gameTimeout)) |> ignore
+
+let getPlayer (pid : string) (game : Game) =
+  printfn "player id: %s game id: %s " pid game.GameId
+  let ky : RedisKey = ~~(playersSetKey game.GameId)
+  let playerKey : RedisValue = ~~pid
+  ~~db.HashGet(ky, playerKey)
+  |> function
+  | null -> Error("No such player")
+  | s ->
+    Decode.Auto.fromString<Player> (s, extra = extra)
+    |> Result.mapError
+         (fun _ -> "Couldn't deserialize that player, the game is corrupt")
+
+let createPlayer (game : Game) (np : NewPlayer) =
+  let userKey : RedisKey = ~~(playersByUserKey game.GameId)
   let usr : RedisValue = ~~(np.Username)
   let countKey : RedisKey = ~~(playersCount game.GameId)
 
@@ -85,23 +104,28 @@ let createPlayer (game : Game) (np : NewPlayer) =
         Dealer = position = 1L
         Hand = None
         Id = Guid.NewGuid().ToString() }
-
-    let playerKey = playerKey game.GameId player.Id
-    storeRedis playerKey player (Some gameTimeout) |> ignore
+    storePlayer game player
     let uredis : RedisValue = ~~np.Username
-    db.SetAdd(ky, uredis) |> ignore
-    db.KeyExpire(ky, Nullable(gameTimeout)) |> ignore
+    db.SetAdd(userKey, uredis) |> ignore
+    db.KeyExpire(userKey, Nullable(gameTimeout)) |> ignore
     player
-  if db.SetContains(ky, usr) then Error("Player already exists")
+  if db.SetContains(userKey, usr) then Error("Player already exists")
   else
     Ok "NextStep"
     |> Result.map (fun _ -> db.StringIncrement(countKey))
     |> Result.map (storePlayer np)
 
 let startGame (game : Game) : Result<Game, string> =
-  if game.PlayersConnected = game.Players then
-    Error("Not all players connected")
-  else { game with IsStarted = true } |> Ok
+  let pc = getPlayerCount game.GameId
+  if pc <> game.Players then Error("Not all players connected")
+  else
+    let updatedGame =
+      { game with IsStarted = true
+                  PlayersConnected = pc }
+    storeRedis (gameKey updatedGame.GameId) updatedGame (Some(gameTimeout))
+    |> ignore
+    // Call the method to deal to the players
+    updatedGame |> Ok
 
 let playerController gameId =
   controller {
@@ -115,6 +139,13 @@ let playerController gameId =
                | Ok(player) -> Controller.json ctx player
                | Error(str) -> (Response.badRequest ctx str)
       })
+    show (fun ctx id ->
+      showGame gameId
+      |> Result.mapError (fun _ -> "Unable to find the game")
+      |> Result.bind (getPlayer id)
+      |> function
+      | Ok(player) -> Controller.json ctx player
+      | Error(str) -> Response.badRequest ctx str)
   }
 
 let startController gameId =
