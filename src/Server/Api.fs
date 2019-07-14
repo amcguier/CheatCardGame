@@ -69,6 +69,7 @@ let showGame (gameId : string) : Result<Game, String> =
   |> Result.bind Decode.Auto.fromString<Game>
   |> Result.map
        (fun game -> { game with PlayersConnected = getPlayerCount gameId })
+  |> Result.mapError (fun _ -> "No such game")
 
 let playerKey gameId playerId =
   sprintf "%s:player:%s" (playersSetKey gameId) playerId
@@ -80,8 +81,22 @@ let storePlayer game player =
   db.HashSet(ky, [| HashEntry(playerKey, value) |])
   db.KeyExpire(ky, Nullable(gameTimeout)) |> ignore
 
+let getPlayers game =
+  let accumResult resultList playerResult =
+    match (resultList, playerResult) with
+    | (Ok(lst), Ok(player)) -> Ok(player :: lst)
+    | (Error(s), _) -> Error(s)
+    | (_, Error(s)) -> Error("Not all players are valid")
+
+  let ky : RedisKey = ~~(playersSetKey game.GameId)
+  db.HashGetAll(ky)
+  |> Array.map
+       ((fun hashSet -> ~~hashSet.Value)
+        >> (fun playerStr ->
+        Decode.Auto.fromString<Player> (playerStr, extra = extra)))
+  |> Array.fold accumResult (Ok([]))
+
 let getPlayer (pid : string) (game : Game) =
-  printfn "player id: %s game id: %s " pid game.GameId
   let ky : RedisKey = ~~(playersSetKey game.GameId)
   let playerKey : RedisValue = ~~pid
   ~~db.HashGet(ky, playerKey)
@@ -92,7 +107,7 @@ let getPlayer (pid : string) (game : Game) =
     |> Result.mapError
          (fun _ -> "Couldn't deserialize that player, the game is corrupt")
 
-let createPlayer (game : Game) (np : NewPlayer) =
+let createPlayer (np : NewPlayer) (game : Game) =
   let userKey : RedisKey = ~~(playersByUserKey game.GameId)
   let usr : RedisValue = ~~(np.Username)
   let countKey : RedisKey = ~~(playersCount game.GameId)
@@ -127,25 +142,37 @@ let startGame (game : Game) : Result<Game, string> =
     // Call the method to deal to the players
     updatedGame |> Ok
 
+let successOrBadReq ctx onSuccess =
+  function
+  | Ok(obj) -> onSuccess obj
+  | Error(str) -> Response.badRequest ctx str
+
+let successOr404 ctx onSuccess =
+  function
+  | Ok(obj) -> onSuccess obj
+  | Error(str) -> Response.notFound ctx str
+
 let playerController gameId =
   controller {
-    create (fun ctx ->
-      task {
+    index
+      (fun ctx ->
+      showGame gameId
+      |> successOr404 ctx
+           (getPlayers >> successOrBadReq ctx (Controller.json ctx)))
+    create
+      (fun ctx ->
+      task
+        {
         let! (newPlayer : NewPlayer) = Controller.getJson ctx
         return showGame gameId
-               |> Result.mapError (fun _ -> "Unable to find the game")
-               |> Result.bind (fun game -> createPlayer game newPlayer)
-               |> function
-               | Ok(player) -> Controller.json ctx player
-               | Error(str) -> (Response.badRequest ctx str)
-      })
-    show (fun ctx id ->
+               |> successOr404 ctx
+                    (createPlayer newPlayer
+                     >> successOrBadReq ctx (Controller.json ctx)) })
+    show
+      (fun ctx id ->
       showGame gameId
-      |> Result.mapError (fun _ -> "Unable to find the game")
-      |> Result.bind (getPlayer id)
-      |> function
-      | Ok(player) -> Controller.json ctx player
-      | Error(str) -> Response.badRequest ctx str)
+      |> successOr404 ctx
+           (getPlayer id >> successOr404 ctx (Controller.json ctx)))
   }
 
 let startController gameId =
