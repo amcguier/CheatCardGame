@@ -81,6 +81,8 @@ let storePlayer game player =
   db.HashSet(ky, [| HashEntry(playerKey, value) |])
   db.KeyExpire(ky, Nullable(gameTimeout)) |> ignore
 
+let maskIds players = List.map (fun player -> { player with Id = "" }) players
+
 let getPlayers game =
   let accumResult resultList playerResult =
     match (resultList, playerResult) with
@@ -154,11 +156,11 @@ let successOr404 ctx onSuccess =
 
 let playerController gameId =
   controller {
-    index
-      (fun ctx ->
+    index (fun ctx ->
       showGame gameId
-      |> successOr404 ctx
-           (getPlayers >> successOrBadReq ctx (Controller.json ctx)))
+      |> successOr404 ctx (getPlayers
+                           >> (Result.map maskIds)
+                           >> successOrBadReq ctx (Controller.json ctx)))
     create
       (fun ctx ->
       task
