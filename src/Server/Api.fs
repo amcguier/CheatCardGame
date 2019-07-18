@@ -74,14 +74,15 @@ let showGame (gameId : string) : Result<Game, String> =
 let playerKey gameId playerId =
   sprintf "%s:player:%s" (playersSetKey gameId) playerId
 
-let storePlayer game player =
+let storePlayer game (player : Player) =
   let ky : RedisKey = ~~(playersSetKey game.GameId)
   let playerKey : RedisValue = ~~(player.Id)
   let value : RedisValue = ~~(Encode.Auto.toString (2, player, extra = extra))
   db.HashSet(ky, [| HashEntry(playerKey, value) |])
   db.KeyExpire(ky, Nullable(gameTimeout)) |> ignore
 
-let maskIds players = List.map (fun player -> { player with Id = "" }) players
+let maskIds (players : Player list) =
+  List.map (fun (player : Player) -> { player with Id = "" }) players
 
 let getPlayers game =
   let accumResult resultList playerResult =
@@ -154,8 +155,19 @@ let successOr404 ctx onSuccess =
   | Ok(obj) -> onSuccess obj
   | Error(str) -> Response.notFound ctx str
 
+let emptyTurn =
+  { Id = Guid.NewGuid().ToString()
+    ToPlay = Ace
+    CardsDown = None
+    TurnOver = false }
+
+let playerTurnController gameId playerId =
+  controller
+    { index (fun ctx -> task { return emptyTurn |> Controller.json ctx }) }
+
 let playerController gameId =
   controller {
+    subController "/turns" (playerTurnController gameId)
     index (fun ctx ->
       showGame gameId
       |> successOr404 ctx (getPlayers

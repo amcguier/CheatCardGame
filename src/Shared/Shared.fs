@@ -47,3 +47,9 @@ type Game =
 
 type Counter =
   { Value : int }
+
+type Turn =
+  { Id : string
+    ToPlay : Value
+    CardsDown : int option
+    TurnOver : bool }
