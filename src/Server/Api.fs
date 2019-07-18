@@ -10,7 +10,14 @@ open Shared
 open Thoth.Json.Net
 open System.Collections.Generic
 
-let redis = ConnectionMultiplexer.Connect("localhost")
+let redisConfig =
+  Environment.GetEnvironmentVariable "REDIS_SERVER"
+  |> function
+  | null
+  | "" -> "localhost:6379"
+  | s -> s
+
+let redis = ConnectionMultiplexer.Connect(redisConfig)
 let db = redis.GetDatabase()
 let inline (~~) (x : ^a) : ^b =
   ((^a or ^b) : (static member op_Implicit : ^a -> ^b) x)

@@ -105,8 +105,8 @@ Target.create "Bundle" (fun _ ->
     runDotNet publishArgs serverPath
     Shell.copyDir publicDir clientDeployPath FileFilter.allFiles)
 
-let dockerUser = "safe-template"
-let dockerImageName = "safe-template"
+let dockerUser = "echogate-tech"
+let dockerImageName = "cheatthegame"
 let dockerFullName = sprintf "%s/%s" dockerUser dockerImageName
 
 Target.create "Docker" (fun _ -> buildDocker dockerFullName)
