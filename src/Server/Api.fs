@@ -37,6 +37,36 @@ let storeRedis (key : string) value (timeSpan : TimeSpan Option) =
 
 let gameKey = sprintf "game:%s"
 
+let storeExpiringSet (key : String) (entry : String) =
+  let ky : RedisKey = ~~key
+  let element : RedisValue = ~~entry
+  let score = (DateTimeOffset.UtcNow.ToUnixTimeSeconds() |> float)
+  let entry = SortedSetEntry(element, score)
+  db.SortedSetAdd(ky, [| entry |]) |> ignore
+
+let expireSet (key : String) (timeStamp : int64) =
+  let ky : RedisKey = ~~key
+  let score = timeStamp |> float
+  let startScore = 0.0
+  db.SortedSetRemoveRangeByScore(ky, startScore, score)
+
+let gamesListKey = "games"
+
+let getActiveGames() =
+  let timeStamp =
+    DateTimeOffset.UtcNow.Subtract(gameTimeout).ToUnixTimeSeconds()
+  expireSet gamesListKey timeStamp |> ignore
+  let ky : RedisKey = ~~gamesListKey
+  db.SortedSetRangeByRank(ky, 0L, Int64.MaxValue)
+  |> Array.map ((fun x ->
+                let (s : string) = ~~x
+                s)
+                >> (fun (s : string) -> s.Split(':'))
+                >> (fun arr ->
+                { Id = arr.[0]
+                  OwnerName = arr.[1] }))
+  |> Array.toList
+
 let createGame (newGame : NewGame) =
   let id = Guid.NewGuid().ToString()
 
@@ -49,6 +79,8 @@ let createGame (newGame : NewGame) =
   Some(gameTimeout)
   |> storeRedis (gameKey id) game
   |> ignore
+  let gameInfo = sprintf "%s:%s" game.GameId game.Owner
+  storeExpiringSet gamesListKey gameInfo
   game
 
 let resultTo404 ctx msg =
@@ -205,7 +237,7 @@ let gameController =
   controller {
     subController "/start" startController
     subController "/players" playerController
-    index (fun ctx -> "hello world" |> Controller.json ctx)
+    index (fun ctx -> getActiveGames () |> Controller.json ctx)
     create (fun ctx ->
       task {
         let! (ng : NewGame) = Controller.getJson ctx

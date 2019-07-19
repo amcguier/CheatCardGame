@@ -24,6 +24,10 @@ type GameState =
     PlayerCounts : int list
     DiscardCount : int }
 
+type GameInfo =
+  { Id : string
+    OwnerName : string }
+
 type NewGame =
   { Username : string
     Players : int }
