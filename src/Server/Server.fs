@@ -29,7 +29,8 @@ let app =
     use_router webApp
     memory_cache
     use_static publicPath
-    use_json_serializer (Thoth.Json.Giraffe.ThothSerializer(extra = Api.extra))
+    use_json_serializer
+      (Thoth.Json.Giraffe.ThothSerializer(extra = Persistence.extra))
     use_gzip
   }
 

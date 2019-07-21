@@ -7,6 +7,7 @@
     <ItemGroup>
         <None Include="paket.references" />
         <Compile Include="..\Shared\Shared.fs" />
+	<Compile Include="Persistence.fs"/>
 	<Compile Include="CardUtilities.fs" />
 	<Compile Include="Api.fs" />
         <Compile Include="Server.fs" />
