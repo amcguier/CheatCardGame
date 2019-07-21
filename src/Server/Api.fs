@@ -27,19 +27,34 @@ let successOr404 ctx onSuccess =
   | Ok(obj) -> onSuccess obj
   | Error(str) -> Response.notFound ctx str
 
-let emptyTurn =
-  { Id = Guid.NewGuid().ToString()
-    ToPlay = Ace
-    CardsDown = None
-    TurnOver = false }
+let passController gameId playerId =
+  controller {
+    index (fun ctx ->
+      task {
+        showGame gameId
+        |> Result.bind
+             (fun (g : Game) ->
+             getPlayer playerId g |> Result.map (fun p -> (g, p)))
+        |> ignore
+        return emptyTurn |> Controller.json ctx
+      })
+  }
 
 let playerTurnController gameId playerId =
   controller
-    { index (fun ctx -> task { return emptyTurn |> Controller.json ctx }) }
+    {
+    index
+      (fun ctx ->
+      task
+        {
+        return showGame gameId
+               |> successOr404 ctx
+                    (getCurrentTurn >> successOrBadReq ctx (Controller.json ctx)) }) }
 
 let playerController gameId =
   controller {
     subController "/turns" (playerTurnController gameId)
+    subController "/turns/pass" (passController gameId)
     index (fun ctx ->
       showGame gameId
       |> successOr404 ctx (getPlayers
@@ -64,7 +79,11 @@ let playerController gameId =
 let startController gameId =
   controller
     {
-    create (fun ctx -> showGame gameId |> resultTo404 ctx "unable to find game") }
+    create
+      (fun ctx ->
+      showGame gameId
+      |> successOr404 ctx
+           (startGame >> successOrBadReq ctx (Controller.json ctx))) }
 
 let gameController =
   controller {

@@ -81,6 +81,30 @@ let createGame (newGame : NewGame) =
 let playersSetKey gameId = (gameKey gameId) + ":players"
 let playersByUserKey gameId = (gameKey gameId) + ":players:userids"
 let playersCount gameId = playersSetKey gameId + ":count"
+let turnKey gameId = (gameKey gameId) + ":turns"
+let playKey gameId = (gameKey gameId) + ":plays"
+
+let emptyTurn =
+  { Id = Guid.NewGuid().ToString()
+    CardValue = Ace
+    CardsDown = None
+    Position = 2
+    PlaysMade = 0
+    TurnOver = false }
+
+let getCurrentTurn (game : Game) =
+  let turnKey : RedisKey = ~~(turnKey game.GameId)
+  if not game.IsStarted then Error("The game hasn't started")
+  else
+    (~~db.ListGetByIndex(turnKey, 0L))
+    |> Decode.Auto.fromString<Turn>
+    |> Result.mapError (fun _ -> "No turns found, try a different game")
+
+let initializeTurnList gameId =
+  let turnKey : RedisKey = ~~(turnKey gameId)
+  let turn : RedisValue = ~~(Encode.Auto.toString (2, emptyTurn, extra = extra))
+  db.ListLeftPush(turnKey, [| turn |]) |> ignore
+  db.KeyExpire(turnKey, Nullable(gameTimeout)) |> ignore
 
 let getPlayerCount gameId : int =
   let id : RedisKey = ~~(playersCount gameId)
@@ -164,8 +188,11 @@ let createPlayer (np : NewPlayer) (game : Game) =
 
 let startGame (game : Game) : Result<Game, string> =
   let pc = getPlayerCount game.GameId
-  if pc <> game.Players then Error("Not all players connected")
-  else
+  match (pc, game.IsStarted) with
+  | (_, true) -> Error("Game is already started")
+  | (x, _) when x <> game.Players -> Error("Not all players connected")
+  | _ ->
+    initializeTurnList game.GameId
     let updatedGame =
       { game with IsStarted = true
                   PlayersConnected = pc }

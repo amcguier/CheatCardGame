@@ -54,6 +54,8 @@ type Counter =
 
 type Turn =
   { Id : string
-    ToPlay : Value
+    CardValue : Value
+    Position : int
+    PlaysMade : int
     CardsDown : int option
     TurnOver : bool }
