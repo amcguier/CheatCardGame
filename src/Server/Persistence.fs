@@ -70,7 +70,8 @@ let createGame (newGame : NewGame) =
       Owner = newGame.Username
       Players = newGame.Players
       PlayersConnected = 0
-      IsStarted = false }
+      IsStarted = false
+      IsFinished = false }
   Some(gameTimeout)
   |> storeRedis (gameKey id) game
   |> ignore
@@ -81,30 +82,6 @@ let createGame (newGame : NewGame) =
 let playersSetKey gameId = (gameKey gameId) + ":players"
 let playersByUserKey gameId = (gameKey gameId) + ":players:userids"
 let playersCount gameId = playersSetKey gameId + ":count"
-let turnKey gameId = (gameKey gameId) + ":turns"
-let playKey gameId = (gameKey gameId) + ":plays"
-
-let emptyTurn =
-  { Id = Guid.NewGuid().ToString()
-    CardValue = Ace
-    CardsDown = None
-    Position = 2
-    PlaysMade = 0
-    TurnOver = false }
-
-let getCurrentTurn (game : Game) =
-  let turnKey : RedisKey = ~~(turnKey game.GameId)
-  if not game.IsStarted then Error("The game hasn't started")
-  else
-    (~~db.ListGetByIndex(turnKey, 0L))
-    |> Decode.Auto.fromString<Turn>
-    |> Result.mapError (fun _ -> "No turns found, try a different game")
-
-let initializeTurnList gameId =
-  let turnKey : RedisKey = ~~(turnKey gameId)
-  let turn : RedisValue = ~~(Encode.Auto.toString (2, emptyTurn, extra = extra))
-  db.ListLeftPush(turnKey, [| turn |]) |> ignore
-  db.KeyExpire(turnKey, Nullable(gameTimeout)) |> ignore
 
 let getPlayerCount gameId : int =
   let id : RedisKey = ~~(playersCount gameId)
@@ -185,6 +162,71 @@ let createPlayer (np : NewPlayer) (game : Game) =
     Ok "NextStep"
     |> Result.map (fun _ -> db.StringIncrement(countKey))
     |> Result.map (storePlayer np)
+
+let turnKey gameId = (gameKey gameId) + ":turns"
+let playKey gameId = (gameKey gameId) + ":plays"
+
+let emptyTurn =
+  { Id = Guid.NewGuid().ToString()
+    CardValue = Ace
+    CardsDown = None
+    Position = 2L
+    PlaysMade = 0
+    TurnOver = false }
+
+type Play =
+  | Pass
+  | Call
+  | Cards of Card list
+
+let getCurrentTurn (game : Game) =
+  let turnKey : RedisKey = ~~(turnKey game.GameId)
+  if not game.IsStarted then Error("The game hasn't started")
+  else
+    (~~db.ListGetByIndex(turnKey, 0L))
+    |> Decode.Auto.fromString<Turn>
+    |> Result.mapError (fun _ -> "No turns found, try a different game")
+
+type GameData = Game * Player * Turn * Play
+
+let validateCards (player : Player) (cards : Card list) onSuccess =
+  let hand = Set.ofList (Option.defaultValue [] player.Hand)
+  let cardSet = Set.ofList cards
+  Set.intersect hand cardSet
+  |> Set.count
+  |> fun ct ->
+    if cards.Length = ct then Ok(onSuccess)
+    else Error("You must provide cards in your hand")
+
+
+let validatePlay (data : GameData) =
+  match data with
+  | (g, _, _, _) when g.IsFinished ->
+    Error("Game is finished, no play is possible")
+  | (g, _, t, _) when t.TurnOver ->
+    Error("Turn is finished, no play is possible")
+  | (_, p, t, Play.Cards(cards)) when p.Position = t.Position ->
+    validateCards p cards data
+  | (_, p, t, Pass) when p.Position <> t.Position -> Ok(data)
+  | (_, p, t, Call) when p.Position <> t.Position && t.CardsDown.IsSome ->
+    Ok(data)
+  | _ -> Error("Invalid play information provided")
+
+let makePlay gameId playerId play =
+  let playData =
+    showGame gameId
+    |> Result.bind
+         (fun game -> getPlayer playerId game |> Result.map (fun p -> (game, p)))
+    |> Result.bind
+         (fun (g, p) ->
+         getCurrentTurn g |> Result.map (fun t -> (g, p, t, play)))
+  playData |> Result.map (fun (_, _, t, _) -> t)
+
+let initializeTurnList gameId =
+  let turnKey : RedisKey = ~~(turnKey gameId)
+  let turn : RedisValue = ~~(Encode.Auto.toString (2, emptyTurn, extra = extra))
+  db.ListLeftPush(turnKey, [| turn |]) |> ignore
+  db.KeyExpire(turnKey, Nullable(gameTimeout)) |> ignore
 
 let startGame (game : Game) : Result<Game, string> =
   let pc = getPlayerCount game.GameId

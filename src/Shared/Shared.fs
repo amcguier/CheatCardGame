@@ -47,7 +47,8 @@ type Game =
     Owner : string
     Players : int
     PlayersConnected : int
-    IsStarted : bool }
+    IsStarted : bool
+    IsFinished : bool }
 
 type Counter =
   { Value : int }
@@ -55,7 +56,7 @@ type Counter =
 type Turn =
   { Id : string
     CardValue : Value
-    Position : int
+    Position : int64
     PlaysMade : int
     CardsDown : int option
     TurnOver : bool }
