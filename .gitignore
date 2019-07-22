@@ -12,3 +12,6 @@ release.sh
 .idea/
 *.DotSettings.user
 deploy
+
+.terraform/
+*tfstate*
