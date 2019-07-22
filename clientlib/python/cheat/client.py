@@ -78,5 +78,16 @@ class Client():
             return True
         else:
             return False
-            
+
+    def list_games(self):
+        url = parse.urljoin(self.api_url,"games")
+        response = requests.get(url)
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print("got an error message from the server")
+            return None
+        
     def join_game(self,player):
+        pass
