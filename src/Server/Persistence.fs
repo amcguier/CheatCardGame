@@ -198,7 +198,6 @@ let validateCards (player : Player) (cards : Card list) onSuccess =
     if cards.Length = ct then Ok(onSuccess)
     else Error("You must provide cards in your hand")
 
-
 let validatePlay (data : GameData) =
   match data with
   | (g, _, _, _) when g.IsFinished ->
@@ -228,6 +227,27 @@ let initializeTurnList gameId =
   db.ListLeftPush(turnKey, [| turn |]) |> ignore
   db.KeyExpire(turnKey, Nullable(gameTimeout)) |> ignore
 
+let setupInitialPlayerHands game (hands : Hand list) =
+  let players =
+    getPlayers game
+    |> function
+    | Ok(players) -> players
+    | _ -> failwith "Invalid state when starting game"
+    |> List.sortBy (fun p -> p.Position)
+
+  let sortedHands =
+    hands
+    |> List.sortByDescending (fun h -> h.Length)
+    |> function
+    | (a :: rem) -> rem @ [ a ]
+    | l -> l
+
+  List.zip players sortedHands |> List.iter (function
+                                    | (player, hand) ->
+                                      let uplayer =
+                                        { player with Hand = hand |> Some }
+                                      storePlayer game uplayer)
+
 let startGame (game : Game) : Result<Game, string> =
   let pc = getPlayerCount game.GameId
   match (pc, game.IsStarted) with
@@ -240,5 +260,8 @@ let startGame (game : Game) : Result<Game, string> =
                   PlayersConnected = pc }
     storeRedis (gameKey updatedGame.GameId) updatedGame (Some(gameTimeout))
     |> ignore
+    CardUtilities.createDeck()
+    |> CardUtilities.deal updatedGame.Players
+    |> setupInitialPlayerHands updatedGame
     // Call the method to deal to the players
     updatedGame |> Ok
