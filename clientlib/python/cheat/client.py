@@ -5,7 +5,7 @@ class Client():
     _api_url = ""
     _username = ""
     _game_running = False
-    _game_id = ""
+    _game_id = None
     _players = 0
     _players_connected = 0
     _player_id = None
@@ -56,7 +56,7 @@ class Client():
     def hand(self):
         return self._hand
     
-    def __init__(self,username,game_id=''):
+    def __init__(self,username,game_id=None):
         self._api_url = "https://cheatcardgame.com/api/"
         self._username = username
         self._game_id = game_id
@@ -76,7 +76,7 @@ class Client():
         self._hand = []
 
         for entry in hand_list:
-            card = {Suit : entry['Suit']}
+            card = {'Suit' : entry['Suit']}
             value = entry['Value']
             
             if isinstance(value,str):
@@ -84,19 +84,16 @@ class Client():
                     card['Value'] = 11
                 elif value == 'Queen':
                     card['Value'] = 12
-                if value == 'King':
+                elif value == 'King':
                     card['Value'] = 13
                 elif value == 'Ace':
                     card['Value'] = 1
                 else:
-                    raise Exception("Invalid card returned")
+                    raise Exception("Invalid card returned {}".format(entry))
             else:
                 card['Value'] = int(value[1])
             
-            self._hand.append(card)        
-                
-            
-
+            self._hand.append(card)                        
         
     def _update_player(self,player_dict):
         self._player_id = player_dict['Id']
@@ -110,7 +107,7 @@ class Client():
         print("Error:",response.status_code,response.text)
         
     def update_game(self):
-        if self.game_id == "":
+        if self.game_id is None:
             return False
 
         url = self._game_url()
@@ -161,12 +158,13 @@ class Client():
 
         if response:
             self._update_game_state(response.json())
+            self.update_player_info()
             return True
         else:
             self._log_error_response(response)                            
         
     def join_game(self):
-        if self.game_id == '' or self.username == '':
+        if self.game_id is None or self.username == '':
             print("invalid client info, no game_id or username set")
             return False
 
@@ -184,3 +182,40 @@ class Client():
             self._log_error_response(response)
             return False
 
+    def update_player_info(self):
+        if self._player_id is None or self.game_id is None:
+            print('You must join a game to update the player info')
+            return False
+
+        fragment = 'games/{}/players/{}'.format(self.game_id,self._player_id)
+        url = parse.urljoin(self.api_url,fragment)
+
+        response = requests.get(url)
+
+        if response:
+            self._update_player(response.json())
+            return True
+        else:
+            self._log_error_response(response)
+            return False
+        
+        
+        
+    def get_current_turn(self):        
+        if self._player_id is None or self.game_id is None:
+            print('You need to join a game to get the turn')
+            return None
+        
+        fragment = "games/{}/players/{}/turns".format(self.game_id,self._player_id)
+        url = parse.urljoin(self.api_url,fragment)
+
+        response = requests.get(url)
+
+        if not response:
+            self._log_error_response(response)
+            return None
+        else:
+            return response.json()
+
+        
+        
