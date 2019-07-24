@@ -96,7 +96,7 @@ let showGame (gameId : string) : Result<Game, String> =
   |> function
   | null -> Error("No value from redis")
   | s -> Ok(s)
-  |> Result.bind Decode.Auto.fromString<Game>
+  |> Result.bind (fun s -> Decode.Auto.fromString<Game>(s,extra = extra))
   |> Result.map
        (fun game -> { game with PlayersConnected = getPlayerCount gameId })
   |> Result.mapError (fun _ -> "No such game")
@@ -184,7 +184,7 @@ let getCurrentTurn (game : Game) =
   if not game.IsStarted then Error("The game hasn't started")
   else
     (~~db.ListGetByIndex(turnKey, 0L))
-    |> Decode.Auto.fromString<Turn>
+    |> fun s -> Decode.Auto.fromString<Turn>(s,extra = extra)
     |> Result.mapError (fun _ -> "No turns found, try a different game")
 
 type GameData = Game * Player * Turn * Play
