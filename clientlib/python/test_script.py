@@ -21,3 +21,5 @@ np.join_game()
 
 
 c.start_game()
+
+np.update_player_info()

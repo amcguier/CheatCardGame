@@ -13,6 +13,8 @@ class Client():
     _position = None
     _dealer = False
     _hand = None
+
+
     
     @property
     def game_id(self):
@@ -102,7 +104,31 @@ class Client():
 
         if 'Hand' in player_dict:
             self._update_player_hand(player_dict['Hand'])
-        
+
+
+
+    def _cards_to_server(self,cards):
+        card_list = []
+        for card in cards:
+            server_card = { 'Suit' : card['Suit']}
+            value = card['Value']
+            new_value = None
+            if value == 1:
+                new_value = 'Ace'
+            elif value == 11:
+                new_value =  'Jack'
+            elif value == 12:
+                new_value = 'Queen'
+            elif value == 13:
+                new_value = 'King'
+            else:
+                new_value = ["Number",value]
+
+            server_card['Value'] = new_value
+            card_list.append(server_card)
+        return card_list            
+
+            
     def _log_error_response(self,response):
         print("Error:",response.status_code,response.text)
         
@@ -198,9 +224,7 @@ class Client():
         else:
             self._log_error_response(response)
             return False
-        
-        
-        
+                        
     def get_current_turn(self):        
         if self._player_id is None or self.game_id is None:
             print('You need to join a game to get the turn')
@@ -217,5 +241,51 @@ class Client():
         else:
             return response.json()
 
+    def play_pass(self):
+        if self._player_id is None or self.game_id is None:
+            print('You need to join a game to make a play')
+            return None
+        fragment = "games/{}/players/{}/turns/pass".format(self.game_id,self._player_id)
+        url = parse.urljoin(self.api_url,fragment)
+        response = requests.post(url)
         
+        if not response:
+            self._log_error_response(response)
+            return None
+        else:
+            return response.json()        
+        pass
+
+    def play_call(self):
+        if self._player_id is None or self.game_id is None:
+            print('You need to join a game to make a play')
+            return None
+        fragment = "games/{}/players/{}/turns/call".format(self.game_id,self._player_id)
+        url = parse.urljoin(self.api_url,fragment)
         
+        response = requests.post(url)        
+        if not response:
+            self._log_error_response(response)
+            return None
+        else:
+            return response.json()        
+        pass
+                                                  
+    def play_cards(self,cards):
+        if self._player_id is None or self.game_id is None:
+            print('You need to join a game to make a play')
+            return None
+        fragment = "games/{}/players/{}/turns/play".format(self.game_id,self._player_id)
+
+        url = parse.urljoin(self.api_url,fragment)
+        to_send = self._cards_to_server(cards)        
+        response = requests.post(url,json=to_send)
+        
+        if not response:
+            self._log_error_response(response)
+            return None
+        else:
+            return response.json()        
+        pass
+
+        pass

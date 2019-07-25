@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='cheat',
-    version='0.0.2',
+    version='0.0.4',
     description='a library for thee cheat card game',
     author='Andrew McGuier',
     author_email='andrew@echogatetech.com',
