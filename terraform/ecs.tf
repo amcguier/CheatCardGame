@@ -10,7 +10,7 @@ data "aws_ecr_repository" "default" {
 
 data "aws_ecr_image" "cheat_image" {
   repository_name = "${data.aws_ecr_repository.default.name}"
-  image_tag = "0.0.4"
+  image_tag = "0.0.5"
 }
 
 resource "aws_ecs_cluster" "main" {
