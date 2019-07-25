@@ -60,3 +60,13 @@ type Turn =
     PlaysMade : int
     CardsDown : int option
     TurnOver : bool }
+
+type Play =
+  | Pass
+  | Call
+  | Cards of Card list
+
+type PlayRecord =
+  { TurnId : string
+    PlayerId : string
+    Play : Play }

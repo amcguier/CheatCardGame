@@ -31,6 +31,15 @@ let createDeck() : Hand =
 
 let shuffle (hand : Hand) : Hand = hand |> List.sortBy (fun _ -> rand.Next())
 
+let nextValue =
+  function
+  | Ace -> Number(2)
+  | Number(10) -> Jack
+  | Jack -> Queen
+  | Queen -> King
+  | King -> Ace
+  | Number(x) -> Number(x + 1)
+
 let deal people hand : Hand list =
   hand
   |> shuffle

@@ -48,6 +48,10 @@ let expireSet (key : String) (timeStamp : int64) =
 let gamesListKey = "games"
 
 let getActiveGames() =
+  let arrayToGameObject (arr : string array) =
+    { Id = arr.[0]
+      OwnerName = arr.[1] }
+
   let timeStamp =
     DateTimeOffset.UtcNow.Subtract(gameTimeout).ToUnixTimeSeconds()
   expireSet gamesListKey timeStamp |> ignore
@@ -57,9 +61,7 @@ let getActiveGames() =
                 let (s : string) = ~~x
                 s)
                 >> (fun (s : string) -> s.Split(':'))
-                >> (fun arr ->
-                { Id = arr.[0]
-                  OwnerName = arr.[1] }))
+                >> arrayToGameObject)
   |> Array.toList
 
 let createGame (newGame : NewGame) =
@@ -96,7 +98,7 @@ let showGame (gameId : string) : Result<Game, String> =
   |> function
   | null -> Error("No value from redis")
   | s -> Ok(s)
-  |> Result.bind (fun s -> Decode.Auto.fromString<Game>(s,extra = extra))
+  |> Result.bind (fun s -> Decode.Auto.fromString<Game> (s, extra = extra))
   |> Result.map
        (fun game -> { game with PlayersConnected = getPlayerCount gameId })
   |> Result.mapError (fun _ -> "No such game")
@@ -165,6 +167,30 @@ let createPlayer (np : NewPlayer) (game : Game) =
 
 let turnKey gameId = (gameKey gameId) + ":turns"
 let playKey gameId = (gameKey gameId) + ":plays"
+let pileKey gameId : RedisKey = ~~((gameKey gameId) + ":pile")
+
+let mergeResult =
+  function
+  | (Ok(o), Ok(rem)) -> Ok(o :: rem)
+  | (Error(s), _) -> Error(s)
+  | (_, Error(s)) -> Error(s)
+
+let getAndEmptyPile (game : Game) =
+  let key = pileKey game.GameId
+
+  let pile =
+    db.ListRange(key, 0L, Int64.MaxValue)
+    |> Array.map
+         ((~~)
+          >> (fun s -> Decode.Auto.fromString<Card list> (s, extra = extra)))
+    |> fun arr -> Array.foldBack (fun o s -> mergeResult (o, s)) arr (Ok([]))
+  db.KeyDelete(key) |> ignore
+  pile
+
+let addToPile (game : Game) (cardsToAdd) =
+  let cards : RedisValue =
+    ~~(Encode.Auto.toString (2, cardsToAdd, extra = extra))
+  db.ListLeftPush(pileKey game.GameId, cards) |> ignore
 
 let emptyTurn =
   { Id = Guid.NewGuid().ToString()
@@ -174,20 +200,19 @@ let emptyTurn =
     PlaysMade = 0
     TurnOver = false }
 
-type Play =
-  | Pass
-  | Call
-  | Cards of Card list
-
 let getCurrentTurn (game : Game) =
   let turnKey : RedisKey = ~~(turnKey game.GameId)
   if not game.IsStarted then Error("The game hasn't started")
   else
     (~~db.ListGetByIndex(turnKey, 0L))
-    |> fun s -> Decode.Auto.fromString<Turn>(s,extra = extra)
+    |> fun s -> Decode.Auto.fromString<Turn> (s, extra = extra)
     |> Result.mapError (fun _ -> "No turns found, try a different game")
 
-type GameData = Game * Player * Turn * Play
+type GameData =
+  { Game : Game
+    Player : Player
+    Turn : Turn
+    Play : Play }
 
 let validateCards (player : Player) (cards : Card list) onSuccess =
   let hand = Set.ofList (Option.defaultValue [] player.Hand)
@@ -199,27 +224,128 @@ let validateCards (player : Player) (cards : Card list) onSuccess =
     else Error("You must provide cards in your hand")
 
 let validatePlay (data : GameData) =
-  match data with
-  | (g, _, _, _) when g.IsFinished ->
+  match (data, data.Play) with
+  | (d, _) when d.Game.IsFinished ->
     Error("Game is finished, no play is possible")
-  | (g, _, t, _) when t.TurnOver ->
+  | (d, _) when d.Turn.TurnOver ->
     Error("Turn is finished, no play is possible")
-  | (_, p, t, Play.Cards(cards)) when p.Position = t.Position ->
-    validateCards p cards data
-  | (_, p, t, Pass) when p.Position <> t.Position -> Ok(data)
-  | (_, p, t, Call) when p.Position <> t.Position && t.CardsDown.IsSome ->
-    Ok(data)
+  | (d, Play.Cards(cards)) when d.Player.Position = d.Turn.Position ->
+    validateCards d.Player cards data
+  | (d, Pass) when d.Player.Position <> d.Turn.Position -> Ok(data)
+  | (d, Call) when d.Player.Position <> d.Turn.Position
+                   && d.Turn.CardsDown.IsSome -> Ok(data)
   | _ -> Error("Invalid play information provided")
 
-let makePlay gameId playerId play =
+let lastPlayWasTrue (lst : Card list) (turn : Turn) =
+  List.forall (fun (card : Card) -> card.Value = turn.CardValue) lst
+
+let handleCallCards (data : GameData) (pile : Card list list) =
+  let lastPlay = List.head pile
+  let newCards = List.collect id pile
+
+  let playerToUpdate =
+    if lastPlayWasTrue lastPlay data.Turn then data.Player
+    else
+      (getPlayers data.Game)
+      |> function
+      | Ok(players) ->
+        List.find (fun p -> p.Position = data.Turn.Position) players
+      | _ -> failwith "Invalid player state during game"
+
+  let newHand = playerToUpdate.Hand.Value @ newCards |> Some
+  storePlayer data.Game { playerToUpdate with Hand = newHand }
+  { data.Turn with TurnOver = true }
+
+//load current position and add that players cards
+let executeCall (data : GameData) =
+  // Test if last entry on the pile are all members of the turn value
+  // if yes, pile goes to calling player, if not, pile does to position player
+  getAndEmptyPile data.Game
+  |> Result.map (handleCallCards data)
+  |> function
+  | Ok(turn) -> turn
+  | Error(_) -> failwith "Invalid internal state during play"
+
+let executePlayCards (data : GameData) cards =
+  addToPile data.Game cards
+  let newHand = List.except cards data.Player.Hand.Value |> Some
+  let newPlayer = { data.Player with Hand = newHand }
+  storePlayer data.Game newPlayer
+  { data.Turn with CardsDown =
+                     (cards
+                      |> List.length
+                      |> Some) }
+
+// TODO notify other players this has happened
+let storeUpdatedTurn (game : Game) (turn : Turn) =
+  let turnKey : RedisKey = ~~(turnKey game.GameId)
+
+  let updatedTurn =
+    if turn.PlaysMade = game.Players then { turn with TurnOver = true }
+    else turn
+
+  let serialized : RedisValue =
+    ~~(Encode.Auto.toString (2, updatedTurn, extra = extra))
+  db.ListLeftPop(turnKey) |> ignore
+  db.ListLeftPush(turnKey, serialized) |> ignore
+  if updatedTurn.TurnOver then
+    let newTurn =
+      { Id = Guid.NewGuid().ToString()
+        CardValue = CardUtilities.nextValue updatedTurn.CardValue
+        Position =
+          if turn.Position = int64 (game.Players) then 1L
+          else turn.Position + 1L
+        CardsDown = None
+        PlaysMade = 0
+        TurnOver = false }
+
+    let newSerialized : RedisValue =
+      ~~(Encode.Auto.toString (2, newTurn, extra = extra))
+    db.ListLeftPush(turnKey, newSerialized) |> ignore
+  updatedTurn
+
+let handleTurnover (game : Game) (turn : Turn) = turn
+
+//TODO notify that the turn is over
+let executeValidatedPlay (data : GameData) =
+  match data.Play with
+  | Pass -> data.Turn // do nothing
+  | Call -> executeCall data
+  | Cards(cards) -> executePlayCards data cards
+  |> fun t -> { t with PlaysMade = t.PlaysMade + 1 }
+  |> storeUpdatedTurn data.Game
+  |> handleTurnover data.Game
+  |> fun turn -> { data with Turn = turn }
+
+let storePlay (data : GameData) =
+  let key : RedisKey = ~~(playKey data.Game.GameId)
+
+  let record =
+    { TurnId = data.Turn.Id
+      PlayerId = data.Player.Id
+      Play = data.Play }
+
+  let value : RedisValue = ~~(Encode.Auto.toString (2, record, extra = extra))
+  db.ListLeftPush(key, value) |> ignore
+  data
+
+let makePlay gameId playerId (play : Play) =
   let playData =
     showGame gameId
     |> Result.bind
          (fun game -> getPlayer playerId game |> Result.map (fun p -> (game, p)))
-    |> Result.bind
-         (fun (g, p) ->
-         getCurrentTurn g |> Result.map (fun t -> (g, p, t, play)))
-  playData |> Result.map (fun (_, _, t, _) -> t)
+    |> Result.bind (fun (g, p) ->
+         getCurrentTurn g
+         |> Result.map (fun t ->
+              { Game = g
+                Player = p
+                Turn = t
+                Play = play }))
+  playData
+  |> Result.bind validatePlay
+  |> Result.map (executeValidatedPlay
+                 >> storePlay
+                 >> (fun data -> data.Turn))
 
 let initializeTurnList gameId =
   let turnKey : RedisKey = ~~(turnKey gameId)

@@ -28,18 +28,33 @@ let successOr404 ctx onSuccess =
   | Error(str) -> Response.notFound ctx str
 
 let passController gameId playerId =
-  controller {
-    index (fun ctx ->
-      task {
-        showGame gameId
-        |> Result.bind
-             (fun (g : Game) ->
-             getPlayer playerId g |> Result.map (fun p -> (g, p)))
-        |> ignore
-        return emptyTurn |> Controller.json ctx
-      })
-  }
-
+  controller
+    {
+    create
+      (fun ctx ->
+      task
+        {
+        return makePlay gameId playerId Pass
+               |> successOrBadReq ctx (Controller.json ctx) }) }
+let callController gameId playerId =
+  controller
+    {
+    create
+      (fun ctx ->
+      task
+        {
+        return makePlay gameId playerId Call
+               |> successOrBadReq ctx (Controller.json ctx) }) }
+let playController gameId playerId =
+  controller
+    {
+    create
+      (fun ctx ->
+      task
+        {
+        let! (cards : Card list) = Controller.getJson ctx
+        return makePlay gameId playerId (Cards(cards))
+               |> successOrBadReq ctx (Controller.json ctx) }) }
 let playerTurnController gameId playerId =
   controller
     {
@@ -55,6 +70,8 @@ let playerController gameId =
   controller {
     subController "/turns" (playerTurnController gameId)
     subController "/turns/pass" (passController gameId)
+    subController "/turns/call" (callController gameId)
+    subController "/turns/play" (playController gameId)
     index (fun ctx ->
       showGame gameId
       |> successOr404 ctx (getPlayers
