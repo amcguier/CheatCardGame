@@ -22,11 +22,16 @@ let inline (~~) (x : ^a) : ^b =
 let gameTimeout = TimeSpan.FromMinutes 120.0
 let extra = Extra.empty |> Extra.withInt64
 let subscriber = redis.GetSubscriber()
+let unsubscribeMessage = "UNSUBSCRIBE"
 
 let subscribeToSocket (gameId : Guid) (broadCastAction : string -> unit) =
   let channel : RedisChannel = ~~(gameId.ToString())
-  subscriber.Subscribe(channel)
-            .OnMessage(fun msg -> ~~(msg.Message) |> broadCastAction)
+
+  let subscription (msg : ChannelMessage) =
+    let strMsg : string = ~~(msg.Message)
+    if strMsg = unsubscribeMessage then subscriber.Unsubscribe(msg.Channel)
+    else strMsg |> broadCastAction
+  subscriber.Subscribe(channel).OnMessage(subscription)
 
 let unsubscribeGameSockets (gameId : Guid) =
   let channel : RedisChannel = ~~(gameId.ToString())
@@ -36,6 +41,11 @@ let publishGameSocket (gameId : string) (message : string) =
   let channel : RedisChannel = ~~(gameId)
   let msg : RedisValue = ~~message
   subscriber.Publish(channel, msg) |> ignore
+
+let createAndSerializeSocketMessage topic (mp : MessagePayload) =
+  { Topic = topic
+    Payload = mp }
+  |> fun ob -> Encode.Auto.toString (2, ob, extra = extra)
 
 let storeRedis (key : string) value (timeSpan : TimeSpan Option) =
   let ky : RedisKey = ~~key
@@ -123,7 +133,7 @@ let showGame (gameId : string) : Result<Game, String> =
 let playerKey gameId playerId =
   sprintf "%s:player:%s" (playersSetKey gameId) playerId
 
-let storePlayer game (player : Player) =
+let storePlayer (game : Game) (player : Player) =
   let ky : RedisKey = ~~(playersSetKey game.GameId)
   let playerKey : RedisValue = ~~(player.Id)
   let value : RedisValue = ~~(Encode.Auto.toString (2, player, extra = extra))
@@ -133,7 +143,7 @@ let storePlayer game (player : Player) =
 let maskIds (players : Player list) =
   List.map (fun (player : Player) -> { player with Id = "" }) players
 
-let getPlayers game =
+let getPlayers (game : Game) =
   let accumResult resultList playerResult =
     match (resultList, playerResult) with
     | (Ok(lst), Ok(player)) -> Ok(player :: lst)
@@ -259,16 +269,22 @@ let lastPlayWasTrue (lst : Card list) (turn : Turn) =
 let handleCallCards (data : GameData) (pile : Card list list) =
   let lastPlay = List.head pile
   let newCards = List.collect id pile
+  let playTrue = lastPlayWasTrue lastPlay data.Turn
 
   let playerToUpdate =
-    if lastPlayWasTrue lastPlay data.Turn then data.Player
+    if playTrue then data.Player
     else
       (getPlayers data.Game)
       |> function
       | Ok(players) ->
         List.find (fun p -> p.Position = data.Turn.Position) players
       | _ -> failwith "Invalid player state during game"
-
+  { CallPosition = data.Player.Position
+    Cards = lastPlay
+    WasLie = not playTrue }
+  |> CallMade
+  |> createAndSerializeSocketMessage "CALLED"
+  |> publishGameSocket data.Game.GameId
   let newHand = playerToUpdate.Hand.Value @ newCards |> Some
   storePlayer data.Game { playerToUpdate with Hand = newHand }
   { data.Turn with TurnOver = true }
@@ -288,6 +304,8 @@ let executePlayCards (data : GameData) cards =
   let newHand = List.except cards data.Player.Hand.Value |> Some
   let newPlayer = { data.Player with Hand = newHand }
   storePlayer data.Game newPlayer
+  createAndSerializeSocketMessage "CARDS_PLAYED" NoPayload
+  |> publishGameSocket (data.Game.GameId)
   { data.Turn with CardsDown =
                      (cards
                       |> List.length
@@ -321,7 +339,40 @@ let storeUpdatedTurn (game : Game) (turn : Turn) =
     db.ListLeftPush(turnKey, newSerialized) |> ignore
   updatedTurn
 
-let handleTurnover (game : Game) (turn : Turn) = turn
+let handleTurnover (game : Game) (turn : Turn) =
+  if turn.TurnOver then
+    createAndSerializeSocketMessage "TURN_OVER" (TurnOver turn.Id)
+    |> publishGameSocket game.GameId
+  turn
+
+let handleGameOver (game : Game) (turn : Turn) =
+  //We only need to check game over if the turn is over
+  if turn.TurnOver then
+    let players =
+      getPlayers game
+      |> function
+      | Ok(players) -> players
+      | Error(e) -> failwith e
+
+    let emptyPlayers =
+      players
+      |> List.filter (fun p -> p.Hand.IsSome && p.Hand.Value |> List.isEmpty)
+    if emptyPlayers.Length > 0 then
+      let winner = emptyPlayers.Head
+      { // send socket message
+        GameId = game.GameId
+        WinningPosition = winner.Position }
+      |> GameOver
+      |> createAndSerializeSocketMessage "GAME_OVER"
+      |> publishGameSocket game.GameId
+      { // update game value
+        game with IsFinished = true }
+      |> fun g -> storeRedis (gameKey game.GameId) g (Some(gameTimeout))
+      |> ignore
+      // unsubscribe all socket players
+      publishGameSocket game.GameId unsubscribeMessage
+  // unsubscribe our subscribers
+  turn
 
 //TODO notify that the turn is over
 let executeValidatedPlay (data : GameData) =
@@ -332,6 +383,7 @@ let executeValidatedPlay (data : GameData) =
   |> fun t -> { t with PlaysMade = t.PlaysMade + 1 }
   |> storeUpdatedTurn data.Game
   |> handleTurnover data.Game
+  |> handleGameOver data.Game
   |> fun turn -> { data with Turn = turn }
 
 let storePlay (data : GameData) =
@@ -370,7 +422,7 @@ let initializeTurnList gameId =
   db.ListLeftPush(turnKey, [| turn |]) |> ignore
   db.KeyExpire(turnKey, Nullable(gameTimeout)) |> ignore
 
-let setupInitialPlayerHands game (hands : Hand list) =
+let setupInitialPlayerHands (game : Game) (hands : Hand list) =
   let players =
     getPlayers game
     |> function
@@ -407,7 +459,7 @@ let startGame (game : Game) : Result<Game, string> =
     |> CardUtilities.deal updatedGame.Players
     |> setupInitialPlayerHands updatedGame
     { // Call the method to deal to the players
-      Topic = "GameStarted"
+      Topic = "GAME_STARTED"
       Payload = NoPayload }
     |> fun obj -> Encode.Auto.toString (2, obj, extra = extra)
     |> publishGameSocket (updatedGame.GameId)

@@ -11,6 +11,7 @@ resource "aws_alb" "main" {
   name            = "cb-load-balancer"
   subnets         = ["${aws_subnet.public.0.id}","${aws_subnet.public.1.id}"]
   security_groups = ["${aws_security_group.lb.id}"]
+  idle_timeout = 600
 }
 
 resource "aws_alb_target_group" "app" {
@@ -18,7 +19,7 @@ resource "aws_alb_target_group" "app" {
   port        = 80
   protocol    = "HTTP"
   vpc_id      = "${aws_vpc.main.id}"
-  target_type = "ip"
+  target_type = "ip"  
 
   health_check {
     healthy_threshold   = "3"

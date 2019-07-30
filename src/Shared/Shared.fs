@@ -73,12 +73,17 @@ type PlayRecord =
 
 type TurnCalled =
   { CallPosition : int64
-    Cards : Hand list
+    Cards : Card list
     WasLie : bool }
+
+type GameOver =
+  { GameId : string
+    WinningPosition : int64 }
 
 type MessagePayload =
   | CallMade of TurnCalled
   | TurnOver of string
+  | GameOver of GameOver
   | NoPayload
 
 type SocketMessage =
