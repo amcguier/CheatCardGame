@@ -233,6 +233,27 @@ class Client():
             print('Finished configuring socket')
                   
         
+    def wait_for_message(self):
+        if self._ws is None:
+            return ("NO_SOCKET",None)
+
+        msg = self._ws.recv()
+        if msg is None:
+            return ("SOCKET_ERROR",None)
+
+        outer_packet = json.loads(msg)
+        structure = None
+        try:
+            structure = json.loads(outer_packet['Payload'])
+        except:
+            print(msg)
+            return ("SOCKET_ERROR",None)
+
+        
+        if structure['Topic'] == 'GAME_STARTED' or structure['Topic'] == 'CARDS_PLAYED':
+            return (structure['Topic'],None)
+        else:
+            return (structure['Topic'],structure['Payload'])
         
             
     def join_game(self):

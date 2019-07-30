@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='cheat',
-    version='0.0.5',
+    version='0.0.6',
     description='a library for thee cheat card game',
     author='Andrew McGuier',
     author_email='andrew@echogatetech.com',
@@ -15,7 +15,7 @@ setup(
         ],
     packages=find_packages(),
     python_requires='>=3.0, <4',
-    install_requires=['requests'],
+    install_requires=['requests','websocket-client'],
 )
 
     

@@ -2,8 +2,8 @@
 
 c = Client('test_user')
 
-c.api_url = 'http://localhost:8080/api/'
-c.ws_url = 'ws://localhost:8085/ws'
+#c.api_url = 'http://localhost:8080/api/'
+#c.ws_url = 'ws://localhost:8085/ws'
 
 game_response = c.create_game()
 
