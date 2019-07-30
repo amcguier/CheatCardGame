@@ -34,8 +34,8 @@ let passController gameId playerId =
       (fun ctx ->
       task
         {
-        return makePlay gameId playerId Pass
-               |> successOrBadReq ctx (Controller.json ctx) }) }
+        return! makePlay gameId playerId Pass
+                |> successOrBadReq ctx (Controller.json ctx) }) }
 let callController gameId playerId =
   controller
     {
@@ -43,8 +43,8 @@ let callController gameId playerId =
       (fun ctx ->
       task
         {
-        return makePlay gameId playerId Call
-               |> successOrBadReq ctx (Controller.json ctx) }) }
+        return! makePlay gameId playerId Call
+                |> successOrBadReq ctx (Controller.json ctx) }) }
 let playController gameId playerId =
   controller
     {
@@ -53,8 +53,8 @@ let playController gameId playerId =
       task
         {
         let! (cards : Card list) = Controller.getJson ctx
-        return makePlay gameId playerId (Cards(cards))
-               |> successOrBadReq ctx (Controller.json ctx) }) }
+        return! makePlay gameId playerId (Cards(cards))
+                |> successOrBadReq ctx (Controller.json ctx) }) }
 let playerTurnController gameId playerId =
   controller
     {
@@ -62,9 +62,10 @@ let playerTurnController gameId playerId =
       (fun ctx ->
       task
         {
-        return showGame gameId
-               |> successOr404 ctx
-                    (getCurrentTurn >> successOrBadReq ctx (Controller.json ctx)) }) }
+        return! showGame gameId
+                |> successOr404 ctx
+                     (getCurrentTurn
+                      >> successOrBadReq ctx (Controller.json ctx)) }) }
 
 let playerController gameId =
   controller {
@@ -82,10 +83,10 @@ let playerController gameId =
       task
         {
         let! (newPlayer : NewPlayer) = Controller.getJson ctx
-        return showGame gameId
-               |> successOr404 ctx
-                    (createPlayer newPlayer
-                     >> successOrBadReq ctx (Controller.json ctx)) })
+        return! showGame gameId
+                |> successOr404 ctx
+                     (createPlayer newPlayer
+                      >> successOrBadReq ctx (Controller.json ctx)) })
     show
       (fun ctx id ->
       showGame gameId
@@ -110,9 +111,9 @@ let gameController =
     create (fun ctx ->
       task {
         let! (ng : NewGame) = Controller.getJson ctx
-        return ng
-               |> createGame
-               |> Controller.json ctx
+        return! ng
+                |> createGame
+                |> Controller.json ctx
       })
     show
       (fun ctx (id : string) ->
@@ -124,4 +125,10 @@ let webApp =
     forward "/api/games" gameController
     get "/api/init" (fun next ctx -> task { let! counter = getInitCounter()
                                             return! json counter next ctx })
+    get "/api/ping" (fun next ctx ->
+      task {
+        let hub = ctx.GetService<Channels.ISocketHub>()
+        hub.SendMessageToClients "/ws" "hello" "world" |> ignore
+        return! json "success!" next ctx
+      })
   }

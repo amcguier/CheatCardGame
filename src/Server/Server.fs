@@ -32,6 +32,7 @@ let app =
     use_json_serializer
       (Thoth.Json.Giraffe.ThothSerializer(extra = Persistence.extra))
     use_gzip
+    add_channel "/ws" Channel.gameUpdate
   }
 
 run app

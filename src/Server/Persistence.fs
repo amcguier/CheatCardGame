@@ -5,6 +5,8 @@ open StackExchange.Redis
 open Shared
 open Thoth.Json.Net
 open System.Collections.Generic
+open FSharp.Control.Tasks.V2
+open System.Threading.Tasks
 
 let redisConfig =
   Environment.GetEnvironmentVariable "REDIS_SERVER"
@@ -19,6 +21,21 @@ let inline (~~) (x : ^a) : ^b =
   ((^a or ^b) : (static member op_Implicit : ^a -> ^b) x)
 let gameTimeout = TimeSpan.FromMinutes 120.0
 let extra = Extra.empty |> Extra.withInt64
+let subscriber = redis.GetSubscriber()
+
+let subscribeToSocket (gameId : Guid) (broadCastAction : string -> unit) =
+  let channel : RedisChannel = ~~(gameId.ToString())
+  subscriber.Subscribe(channel)
+            .OnMessage(fun msg -> ~~(msg.Message) |> broadCastAction)
+
+let unsubscribeGameSockets (gameId : Guid) =
+  let channel : RedisChannel = ~~(gameId.ToString())
+  subscriber.Unsubscribe(channel)
+
+let publishGameSocket (gameId : string) (message : string) =
+  let channel : RedisChannel = ~~(gameId)
+  let msg : RedisValue = ~~message
+  subscriber.Publish(channel, msg) |> ignore
 
 let storeRedis (key : string) value (timeSpan : TimeSpan Option) =
   let ky : RedisKey = ~~key
@@ -148,7 +165,7 @@ let createPlayer (np : NewPlayer) (game : Game) =
   let countKey : RedisKey = ~~(playersCount game.GameId)
 
   let storePlayer np position : Player =
-    let player =
+    let player : Player =
       { Username = np.Username
         Position = position
         Dealer = position = 1L
@@ -389,5 +406,9 @@ let startGame (game : Game) : Result<Game, string> =
     CardUtilities.createDeck()
     |> CardUtilities.deal updatedGame.Players
     |> setupInitialPlayerHands updatedGame
-    // Call the method to deal to the players
+    { // Call the method to deal to the players
+      Topic = "GameStarted"
+      Payload = NoPayload }
+    |> fun obj -> Encode.Auto.toString (2, obj, extra = extra)
+    |> publishGameSocket (updatedGame.GameId)
     updatedGame |> Ok
