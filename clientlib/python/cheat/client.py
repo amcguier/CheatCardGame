@@ -1,20 +1,23 @@
 import requests
 from urllib import parse
+import websocket
+import json
 
 class Client():
     _api_url = ""
+    _ws_url = ""
     _username = ""
     _game_running = False
     _game_id = None
     _players = 0
     _players_connected = 0
     _player_id = None
-
+    _socket_id = None
     _position = None
     _dealer = False
     _hand = None
 
-
+    _ws = None
     
     @property
     def game_id(self):
@@ -47,6 +50,16 @@ class Client():
 
 
     @property
+    def ws_url(self):
+        return self._ws_url
+
+    @ws_url.setter
+    def ws_url(self,value):
+        if not self._game_running:
+            self._ws_url = value
+
+            
+    @property
     def position(self):
         return self._position
 
@@ -60,9 +73,17 @@ class Client():
     
     def __init__(self,username,game_id=None):
         self._api_url = "https://cheatcardgame.com/api/"
+        self._ws_url = "wss://cheatcardgame.com/ws"
         self._username = username
         self._game_id = game_id
 
+
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        if ws is not None:
+            ws.close()
 
     def _game_url(self):
         game_parts = "games/{}".format(self.game_id)
@@ -104,8 +125,6 @@ class Client():
 
         if 'Hand' in player_dict:
             self._update_player_hand(player_dict['Hand'])
-
-
 
     def _cards_to_server(self,cards):
         card_list = []
@@ -188,7 +207,34 @@ class Client():
             return True
         else:
             self._log_error_response(response)                            
+
+
+    def _init_websocket(self):
+        self._ws = websocket.WebSocket()
+        print('about to connect to the websocket')
+        self._ws.connect(self.ws_url)
+        print('about to initialize the websocket')
+        msg = self._ws.recv()
+        print('initializing socket',msg)
+        initial_message = None
+        if msg is not None:
+            initial_message = json.loads(msg)
+        if initial_message is not None and initial_message['Topic'] == 'yourid':
+            self._socket_id = initial_message['Payload']
+
+        if self._socket_id is not None and self.game_id is not None:
+            
+            dt = {'Topic' : 'game',
+                  'Payload' : {'SocketId': self._socket_id,
+                               'GameId' : self.game_id},
+                  'Ref':self._socket_id
+                  }
+            self._ws.send(json.dumps(dt))
+            print('Finished configuring socket')
+                  
         
+        
+            
     def join_game(self):
         if self.game_id is None or self.username == '':
             print("invalid client info, no game_id or username set")
@@ -201,8 +247,8 @@ class Client():
 
         if response:
             response_dict = response.json()
-            print(response_dict)
             self._update_player(response_dict)
+            self._init_websocket()
             return True
         else:
             self._log_error_response(response)
